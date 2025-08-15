@@ -1,5 +1,9 @@
 // โหลด environment variables
+// โหลด environment variables
 require("dotenv").config();
+
+// เพิ่มบรรทัดนี้
+process.env.NODE_ENV = process.env.NODE_ENV || "development";
 
 const express = require("express");
 const line = require("@line/bot-sdk");
@@ -8,6 +12,10 @@ const path = require("path");
 const axios = require("axios");
 
 const app = express();
+
+// เพิ่มการตั้งค่า encoding
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // ตั้งค่า LINE Bot
 const config = {
@@ -26,27 +34,21 @@ if (!fs.existsSync("uploads")) {
 const userSessions = new Map();
 
 // ฟังก์ชันสำหรับเรียก Claude AI
-async function askClaudeAI(question, imageBase64 = null) {
+// ฟังก์ชันสำหรับเรียก Gemini AI
+async function askGeminiAI(question, imageBase64 = null) {
   try {
-    let messages;
+    const apiKey = process.env.GEMINI_API_KEY;
 
     if (imageBase64) {
-      // ส่งรูป + คำถามไปให้ Claude
-      messages = [
+      // ส่งรูป + คำถามไปให้ Gemini
+      const response = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
         {
-          role: "user",
-          content: [
+          contents: [
             {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: "image/jpeg",
-                data: imageBase64,
-              },
-            },
-            {
-              type: "text",
-              text: `คุณเป็น AI ผู้ช่วยด้านการแปลผลตรวจสุขภาพ กรุณาวิเคราะห์รูปผลตรวจสุขภาพนี้และตอบคำถาม
+              parts: [
+                {
+                  text: `คุณเป็น AI ผู้ช่วยด้านการแปลผลตรวจสุขภาพ กรุณาวิเคราะห์รูปผลตรวจสุขภาพนี้และตอบคำถาม
 
 คำถาม: ${question}
 
@@ -57,43 +59,55 @@ async function askClaudeAI(question, imageBase64 = null) {
 4. ให้คำแนะนำเบื้องต้นถ้าจำเป็น
 
 ตอบเป็นภาษาไทยที่เข้าใจง่าย ไม่เกิน 1000 ตัวอักษร`,
+                },
+                {
+                  inline_data: {
+                    mime_type: "image/jpeg",
+                    data: imageBase64,
+                  },
+                },
+              ],
             },
           ],
         },
-      ];
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      return response.data.candidates[0].content.parts[0].text;
     } else {
       // คำถามเฉยๆ ไม่มีรูป
-      messages = [
+      const response = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
         {
-          role: "user",
-          content: `คุณเป็น AI ผู้ช่วยด้านสุขภาพ
+          contents: [
+            {
+              parts: [
+                {
+                  text: `คุณเป็น AI ผู้ช่วยด้านสุขภาพ
 
 คำถาม: ${question}
 
 ตอบเป็นภาษาไทยที่เข้าใจง่าย ไม่เกิน 500 ตัวอักษร`,
+                },
+              ],
+            },
+          ],
         },
-      ];
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      return response.data.candidates[0].content.parts[0].text;
     }
-
-    const response = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1000,
-        messages: messages,
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.CLAUDE_API_KEY,
-          "anthropic-version": "2023-06-01",
-        },
-      }
-    );
-
-    return response.data.content[0].text;
   } catch (error) {
-    console.error("Claude AI Error:", error.response?.data || error.message);
+    console.error("Gemini AI Error:", error.response?.data || error.message);
     return "ขออภัยครับ เกิดข้อผิดพลาดในการวิเคราะห์ กรุณาลองใหม่อีกครั้ง";
   }
 }
@@ -217,10 +231,7 @@ async function handleEvent(event) {
         console.log("Processing question:", userText, "for user:", userId);
 
         // ส่งคำถาม + รูปไปหา AI
-        const aiResponse = await askClaudeAI(
-          userText,
-          userSession.lastImageBase64
-        );
+        const aiResponse = `Hello! Thank you for your message: "${userText}"\n\nSystem is working properly!`;
 
         const replyMessage = {
           type: "text",
